@@ -40,7 +40,23 @@ export interface BroadcastResult {
 const DEFAULT_PUBLIC_WEBAPP_URL =
   'https://ais-pre-fsb7usr5hyy6bejqcpjcro-993614277555.asia-east1.run.app';
 const DEFAULT_SUPPORT_URL = 'https://t.me/ClienFy_Support';
+const REQUIRED_CHANNEL_USERNAME = 'Client_Fy';
+const REQUIRED_CHANNEL_URL = 'https://t.me/Client_Fy';
 
+async function isRequiredChannelMember(bot: Bot, userId: number): Promise<boolean> {
+  try {
+    const member = await bot.api.getChatMember(`@${REQUIRED_CHANNEL_USERNAME}`, userId);
+    return (
+      member.status === 'creator' ||
+      member.status === 'administrator' ||
+      member.status === 'member' ||
+      (member.status === 'restricted' && Boolean((member as {is_member?: boolean}).is_member))
+    );
+  } catch (err) {
+    console.error('[ClientFy Bot] Failed to check channel subscription:', err);
+    return false;
+  }
+}
 const status: BotRuntimeStatus = {
   running: false,
   username:
@@ -466,6 +482,52 @@ async function sendPromosList(ctx: {reply: Bot['api']['sendMessage'] extends nev
 }
 
 function configureBotHandlers(bot: Bot): void {
+  bot.use(async (ctx, next) => {
+    const userId = ctx.from?.id;
+    if (!userId) return next();
+    if (isBotOwner(String(userId))) return next();
+
+    const joinKeyboard = new InlineKeyboard()
+      .url('📢 Подписаться на канал', REQUIRED_CHANNEL_URL)
+      .row()
+      .text('✅ Я подписался', 'sub:check');
+
+    if (ctx.callbackQuery?.data === 'sub:check') {
+      const subscribed = await isRequiredChannelMember(bot, userId);
+      await ctx.answerCallbackQuery({
+        text: subscribed ? 'Подписка подтверждена ✅' : 'Вы пока не подписаны',
+        show_alert: true,
+      }).catch(() => {});
+      if (subscribed) {
+        await ctx.reply('✅ Доступ открыт. Нажмите /start или /menu.', {
+          reply_markup: mainMenuKb(String(userId), DEFAULT_SUPPORT_URL),
+        }).catch(() => {});
+      } else {
+        await ctx.reply(
+          '🔒 <b>Доступ к боту закрыт</b>\n\nДля использования ClientFy подпишитесь на канал, затем нажмите «Я подписался».',
+          {reply_markup: joinKeyboard},
+        ).catch(() => {});
+      }
+      return;
+    }
+
+    const subscribed = await isRequiredChannelMember(bot, userId);
+    if (subscribed) return next();
+
+    if (ctx.callbackQuery) {
+      await ctx.answerCallbackQuery({
+        text: 'Сначала подпишитесь на канал',
+        show_alert: true,
+      }).catch(() => {});
+    }
+
+    await ctx.reply(
+      '🔒 <b>Доступ к боту закрыт</b>\n\nДля использования ClientFy подпишитесь на наш канал, затем нажмите «Я подписался».',
+      {reply_markup: joinKeyboard},
+    ).catch(() => {});
+    return;
+  });
+
   bot.catch((err) => {
     status.lastError = err.message;
     console.error('[ClientFy Bot] Error:', err.error);
